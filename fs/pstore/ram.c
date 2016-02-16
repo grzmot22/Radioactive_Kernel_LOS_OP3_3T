@@ -542,13 +542,11 @@ static int ramoops_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
-<<<<<<< 4438540a27f7bdd191de8ba444d8e5f4b1b0c207
-	dev_set_drvdata(dev, pdata);
-=======
 	err = dev_set_drvdata(dev, pdata);
 	if (err)
 		goto fail_out;
->>>>>>> fs:pstore:ramoops: config mem from dt
+		
+	dev_set_drvdata(dev, pdata);
 
 	if (pdev->dev.of_node)
 		ramoops_of_init(pdev);
