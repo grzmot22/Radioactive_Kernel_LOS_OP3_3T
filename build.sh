@@ -13,14 +13,14 @@ export KBUILD_BUILD_USER=acuicultor
 export KBUILD_BUILD_HOST=NuclearPowerPlant
 
 #paths
-KERNEL_DIR="/home/acuicultor/android/kernels/Radioactive_Kernel_LOS_OP3-OP3T"
+KERNEL_DIR="/home/acuicultor/android/kernels/Radioactive_Kernel_LOS_OP3_3T"
 ZIP_MOVE="${HOME}/android/releases"
-ZIMAGE_DIR="/home/acuicultor/android/kernels/Radioactive_Kernel_LOS_OP3-OP3T/arch/arm64/boot"
+ZIMAGE_DIR="/home/acuicultor/android/kernels/Radioactive_Kernel_LOS_OP3_3T/arch/arm64/boot"
 MODULES_DIR="${HOME}/android/lazyflasher/modules"
 
 #build info 
 THREAD="-j$(grep -c ^processor /proc/cpuinfo)"
-export CROSS_COMPILE=${HOME}/Android/toolchains/UBERTC-aarch64-linux-android-5.3-kernel/bin/aarch64-linux-android-
+export CROSS_COMPILE=${HOME}/Android/toolchains/ubernaro-aarch64-linux-android-4.9/bin/aarch64-linux-android-
 AK_VER="$BASE_AK_VER$VER"
 export LOCALVERSION=~`echo $AK_VER`
 export LOCALVERSION=~`echo $AK_VER`
