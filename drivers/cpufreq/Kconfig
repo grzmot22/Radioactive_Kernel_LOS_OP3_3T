@@ -206,6 +206,10 @@ config CPU_FREQ_DEFAULT_GOV_DARKNESS
  	bool "darkness"
  	select CPU_FREQ_GOV_DARKNESS
 
+config CPU_FREQ_DEFAULT_GOV_DYNAMIC_INTERACTIVE
+	bool "dynamic_interactive"
+	select CPU_FREQ_GOV_DYNAMIC_INTERACTIVE	  		  
+
 endchoice
 
 config CPU_FREQ_GOV_PERFORMANCE
@@ -352,6 +356,10 @@ config CPUFREQ_DT
 	  systems which share clock and voltage across all CPUs.
 
 	  If in doubt, say N.
+	
+config CPU_FREQ_GOV_DYNAMIC_INTERACTIVE
+	tristate "'dynamic_interactive' cpufreq governor"
+	depends on CPU_FREQ			  	  
 
 config CPU_FREQ_GOV_LIONFISH
 	tristate "'lionfish' governor"
