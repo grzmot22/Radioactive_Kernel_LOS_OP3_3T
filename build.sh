@@ -3,7 +3,7 @@ rm .version
 make mrproper
 make clean
 # Kernel Details
-VER="_V1.0.9_oneplus3-3T"
+VER="_V1.1.0_oneplus3-3T"
 BASE_AK_VER="Radioactive"
 
 # Vars
