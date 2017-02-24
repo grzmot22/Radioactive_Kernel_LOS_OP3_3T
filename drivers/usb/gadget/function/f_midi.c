@@ -32,7 +32,7 @@
 #include <linux/usb/audio.h>
 #include <linux/usb/midi.h>
 
-#include "u_f.h"
+#include "../u_f.h"
 
 MODULE_AUTHOR("Ben Williamson");
 MODULE_LICENSE("GPL v2");
@@ -406,7 +406,7 @@ static void f_midi_unbind(struct usb_configuration *c, struct usb_function *f)
 	card = midi->card;
 	midi->card = NULL;
 	if (card)
-		snd_card_free(card);
+		snd_card_free_when_closed(card);
 
 	kfree(midi->id);
 	midi->id = NULL;

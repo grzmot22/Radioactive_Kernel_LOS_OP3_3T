@@ -215,7 +215,6 @@ static int sleep_enable;
 
 static struct synaptics_ts_data *ts_g = NULL;
 static struct workqueue_struct *synaptics_wq = NULL;
-static struct workqueue_struct *synaptics_report = NULL;
 static struct workqueue_struct *get_base_report = NULL;
 static struct proc_dir_entry *prEntry_tp = NULL;
 
@@ -452,7 +451,6 @@ struct synaptics_ts_data {
 	uint32_t pre_finger_state;
 	uint32_t pre_btn_state;
 	struct delayed_work  base_work;
-	struct work_struct  report_work;
 	struct delayed_work speed_up_work;
 	struct input_dev *input_dev;
 	struct hrtimer timer;
@@ -1395,11 +1393,13 @@ void int_touch(void)
 	}
 	input_sync(ts->input_dev);
 
+#if 0
 	if ((finger_num == 0) && (get_tp_base == 0)){//all finger up do get base once
 		get_tp_base = 1;
 		TPD_ERR("start get base data:%d\n",get_tp_base);
 		tp_baseline_get(ts, false);
 	}
+#endif
 
 #ifdef SUPPORT_GESTURE
 	if (ts->in_gesture_mode == 1 && ts->is_suspended == 1) {
@@ -1410,6 +1410,7 @@ void int_touch(void)
 	mutex_unlock(&ts->mutexreport);
 }
 
+#ifndef TPD_USE_EINT
 static void synaptics_ts_work_func(struct work_struct *work)
 {
 	int ret,status_check;
@@ -1465,7 +1466,6 @@ END:
 	return;
 }
 
-#ifndef TPD_USE_EINT
 static enum hrtimer_restart synaptics_ts_timer_func(struct hrtimer *timer)
 {
 	struct synaptics_ts_data *ts = container_of(timer, struct synaptics_ts_data, timer);
@@ -1479,11 +1479,52 @@ static enum hrtimer_restart synaptics_ts_timer_func(struct hrtimer *timer)
 static irqreturn_t synaptics_irq_thread_fn(int irq, void *dev_id)
 {
 	struct synaptics_ts_data *ts = (struct synaptics_ts_data *)dev_id;
-	mutex_lock(&ts->mutex);
+	int ret,status_check;
+	uint8_t status = 0;
+	uint8_t inte = 0;
+
+	if (atomic_read(&ts->is_stop) == 1)
+	{
+		return IRQ_HANDLED;
+	}
+
+	if( ts->enable_remote) {
+		return IRQ_HANDLED;
+	}
+
 	ts->timestamp = ktime_get();
-    touch_disable(ts);
-	queue_work(synaptics_report, &ts->report_work);
-	mutex_unlock(&ts->mutex);
+
+	ret = synaptics_rmi4_i2c_write_byte(ts->client, 0xff, 0x00 );
+	ret = synaptics_rmi4_i2c_read_word(ts->client, F01_RMI_DATA_BASE);
+
+	if( ret < 0 ) {
+		TPDTM_DMESG("Synaptic:ret = %d\n", ret);
+        synaptics_hard_reset(ts);
+		return IRQ_HANDLED;
+	}
+	status = ret & 0xff;
+	inte = (ret & 0x7f00)>>8;
+	//TPD_ERR("%s status[0x%x],inte[0x%x]\n",__func__,status,inte);
+        if(status & 0x80){
+		TPD_DEBUG("enter reset tp status,and ts->in_gesture_mode is:%d\n",ts->in_gesture_mode);
+		status_check = synaptics_init_panel(ts);
+		if (status_check < 0) {
+			TPD_ERR("synaptics_init_panel failed\n");
+		}
+		if ((ts->is_suspended == 1) && (ts->gesture_enable == 1)){
+			synaptics_enable_interrupt_for_gesture(ts, 1);
+		}
+	}
+/*
+	if(0 != status && 1 != status) {//0:no error;1: after hard reset;the two state don't need soft reset
+        TPD_ERR("%s status[0x%x],inte[0x%x]\n",__func__,status,inte);
+		int_state(ts);
+		goto END;
+	}
+*/
+	if ( inte & 0x04 )
+		int_touch();
+
 	return IRQ_HANDLED;
 }
 #endif
@@ -1699,60 +1740,60 @@ static ssize_t synap_read_address(struct file *file, char __user *user_buf, size
 {
 	int ret;
 	char buffer[PAGESIZE];
-    char buf[128];
-    int i;
-    int cnt = 0;
+	char buf[128];
+	int i;
+	int cnt = 0;
 
 	struct synaptics_ts_data *ts = ts_g;
-    TPD_DEBUG("%s page=0x%x,address=0x%x,block=0x%x\n",__func__,page,address,block);
-    cnt += sprintf(&(buffer[cnt]), "page=0x%x,address=0x%x,block=0x%x\n",page,address,block);
-    ret = synaptics_rmi4_i2c_write_byte(ts->client,0xff,page);
-    ret = synaptics_rmi4_i2c_read_block(ts->client,address,block,buf);
-    for (i=0;i < block;i++)
-    {
-        cnt += sprintf(&(buffer[cnt]), "buf[%d]=0x%x\n",i,buf[i]);
-        TPD_DEBUG("buffer[%d]=0x%x\n",i,buffer[i]);
-    }
-    ret = simple_read_from_buffer(user_buf, count, ppos, buffer, strlen(buffer));
+	TPD_DEBUG("%s page=0x%x,address=0x%x,block=0x%x\n",__func__,page,address,block);
+	cnt += sprintf(&(buffer[cnt]), "page=0x%x,address=0x%x,block=0x%x\n",page,address,block);
+	ret = synaptics_rmi4_i2c_write_byte(ts->client,0xff,page);
+	ret = synaptics_rmi4_i2c_read_block(ts->client,address,block,buf);
+	for (i=0;i < block;i++)
+	{
+		cnt += sprintf(&(buffer[cnt]), "buf[%d]=0x%x\n",i,buf[i]);
+		TPD_DEBUG("buffer[%d]=0x%x\n",i,buffer[i]);
+	}
+	ret = simple_read_from_buffer(user_buf, count, ppos, buffer, strlen(buffer));
 	return ret;
 }
 
 static ssize_t synap_write_address(struct file *file, const char __user *buffer, size_t count, loff_t *ppos)
 {
 	int buf[128];
-    int ret,i;
+	int ret,i;
 	struct synaptics_ts_data *ts = ts_g;
-    int temp_block,wbyte;
-    char reg[30];
+	int temp_block,wbyte;
+	char reg[30];
 
-    ret = sscanf(buffer,"%x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x",\
-    &buf[0],&buf[1],&buf[2],&buf[3],&buf[4],&buf[5],&buf[6],&buf[7],&buf[8],&buf[9],\
-    &buf[10],&buf[11],&buf[12],&buf[13],&buf[14],&buf[15],&buf[16],&buf[17]);
-    for (i = 0;i < ret;i++)
-    {
-        TPD_DEBUG("buf[i]=0x%x,",buf[i]);
-    }
-    TPD_DEBUG("\n");
-    page= buf[0];
-    address = buf[1];
-    temp_block = buf[2];
-    wbyte = buf[3];
-    if (0xFF == temp_block)//the  mark is to write register else read register
-    {
-        for (i=0;i < wbyte;i++)
-        {
-            reg[i] = (char)buf[4+i];
-        }
-        ret = synaptics_rmi4_i2c_write_byte(ts->client,0xff,page);
-        ret = synaptics_rmi4_i2c_write_block(ts->client,(char)address,wbyte,reg);
-        TPD_DEBUG("%s write page=0x%x,address=0x%x\n",__func__,page,address);
-        for (i=0;i < wbyte;i++)
-        {
-            TPD_DEBUG("reg=0x%x\n",reg[i]);
-        }
-    }
-    else
-        block = temp_block;
+	ret = sscanf(buffer,"%x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x",\
+		&buf[0],&buf[1],&buf[2],&buf[3],&buf[4],&buf[5],&buf[6],&buf[7],&buf[8],&buf[9],\
+		&buf[10],&buf[11],&buf[12],&buf[13],&buf[14],&buf[15],&buf[16],&buf[17]);
+	for (i = 0;i < ret;i++)
+	{
+		TPD_DEBUG("buf[i]=0x%x,",buf[i]);
+	}
+	TPD_DEBUG("\n");
+	page= buf[0];
+	address = buf[1];
+	temp_block = buf[2];
+	wbyte = buf[3];
+	if (0xFF == temp_block)//the  mark is to write register else read register
+	{
+		for (i=0;i < wbyte;i++)
+		{
+			reg[i] = (char)buf[4+i];
+		}
+		ret = synaptics_rmi4_i2c_write_byte(ts->client,0xff,page);
+		ret = synaptics_rmi4_i2c_write_block(ts->client,(char)address,wbyte,reg);
+		TPD_DEBUG("%s write page=0x%x,address=0x%x\n",__func__,page,address);
+		for (i=0;i < wbyte;i++)
+		{
+			TPD_DEBUG("reg=0x%x\n",reg[i]);
+		}
+	}
+	else
+		block = temp_block;
 	return count;
 }
 
@@ -2444,7 +2485,6 @@ static int	synaptics_input_init(struct synaptics_ts_data *ts)
 	set_bit(KEY_GESTURE_SWIPE_DOWN, ts->input_dev->keybit);
 	set_bit(KEY_GESTURE_SWIPE_UP, ts->input_dev->keybit);
 #endif
-	set_bit(BTN_TOOL_FINGER, ts->input_dev->keybit);
 	/* For multi touch */
 	input_set_abs_params(ts->input_dev, ABS_MT_TOUCH_MAJOR, 0, 255, 0, 0);
 	input_set_abs_params(ts->input_dev, ABS_MT_TOUCH_MINOR, 0,255, 0, 0);
@@ -4053,8 +4093,8 @@ static int synaptics_ts_probe(struct i2c_client *client, const struct i2c_device
 	TP_FW = CURRENT_FIRMWARE_ID;
 	sprintf(ts->fw_id,"0x%x",TP_FW);
 
-	memset(ts->fw_name,0,TP_FW_NAME_MAX_LEN);
-	memset(ts->test_limit_name,0,TP_FW_NAME_MAX_LEN);
+	memset(ts->fw_name, 0, TP_FW_NAME_MAX_LEN);
+	memset(ts->test_limit_name, 0, TP_FW_NAME_MAX_LEN);
 
 	//sprintf(ts->manu_name, "TP_SYNAPTICS");
 	synaptics_rmi4_i2c_read_block(ts->client, F01_RMI_QUERY11,10, ts->manu_name);
@@ -4069,25 +4109,24 @@ static int synaptics_ts_probe(struct i2c_client *client, const struct i2c_device
 	strcpy(ts->test_limit_name,"tp/14049/14049_Limit_jdi.img");
 	TPD_DEBUG("0synatpitcs_fw: fw_name = %s,ts->manu_name:%s \n",ts->fw_name,ts->manu_name);
 
-	synaptics_wq = create_singlethread_workqueue("synaptics_wq");
+	synaptics_wq = alloc_ordered_workqueue("synaptics_wq", WQ_HIGHPRI);
 	if( !synaptics_wq ){
 		ret = -ENOMEM;
 		goto exit_createworkqueue_failed;
 	}
 	INIT_DELAYED_WORK(&ts->speed_up_work,speedup_synaptics_resume);
 
-	synaptics_report = create_singlethread_workqueue("synaptics_report");
+	synaptics_report = alloc_ordered_workqueue("synaptics_report", WQ_HIGHPRI);
 	if( !synaptics_report ){
 		ret = -ENOMEM;
 		goto exit_createworkqueue_failed;
 	}
 
-	get_base_report = create_singlethread_workqueue("get_base_report");
+	get_base_report = alloc_ordered_workqueue("get_base_report", WQ_HIGHPRI);
 	if( !get_base_report ){
 		ret = -ENOMEM;
 		goto exit_createworkqueue_failed;
 	}
-	INIT_WORK(&ts->report_work,synaptics_ts_work_func);
 	INIT_DELAYED_WORK(&ts->base_work,tp_baseline_get_work);
 
 	ret = synaptics_init_panel(ts); /* will also switch back to page 0x04 */
@@ -4212,8 +4251,6 @@ exit_init_failed:
 exit_createworkqueue_failed:
 	destroy_workqueue(synaptics_wq);
 	synaptics_wq = NULL;
-	destroy_workqueue(synaptics_report);
-	synaptics_report = NULL;
 	destroy_workqueue(get_base_report);
 	get_base_report = NULL;
 

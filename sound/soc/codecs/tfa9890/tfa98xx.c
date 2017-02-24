@@ -787,6 +787,9 @@ static struct snd_soc_dai_driver tfa98xx_dai = {
 	.symmetric_rates = 1,
 };
 
+#ifdef CONFIG_SOUND_CONTROL
+extern struct snd_soc_codec *tfa98xx_codec_ptr;
+#endif
 static int tfa98xx_probe(struct snd_soc_codec *codec)
 {
 	struct tfa98xx *tfa98xx = snd_soc_codec_get_drvdata(codec);
@@ -795,6 +798,9 @@ static int tfa98xx_probe(struct snd_soc_codec *codec)
 
 	codec->control_data = tfa98xx->regmap;
 	tfa98xx->codec = codec;
+#ifdef CONFIG_SOUND_CONTROL
+	tfa98xx_codec_ptr = codec;
+#endif
 	codec->cache_bypass = true;
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,16,0)
@@ -887,13 +893,13 @@ static int tfa98xx_i2c_probe(struct i2c_client *i2c,
 	struct tfa98xx *tfa98xx;
 	int ret;
 	struct device_node *np = i2c->dev.of_node;
-    int error = 0;
+	int error = 0;
 
-    pr_err("%s\n",__func__);
+	pr_err("%s\n",__func__);
 
 
-    if(np!=NULL)
-        tfa_codec_np =np;
+	if(np!=NULL)
+		tfa_codec_np =np;
 
 	if (!i2c_check_functionality(i2c->adapter, I2C_FUNC_I2C)) {
 		dev_err(&i2c->dev, "check_functionality failed\n");

@@ -298,6 +298,8 @@ struct synaptics_ts_data {
 	char fw_name[TP_FW_NAME_MAX_LEN];
 	char fw_id[12];
 	char manu_name[12];
+
+	struct work_struct pm_work;
 };
 
 static int tc_hw_pwron(struct synaptics_ts_data *ts)
@@ -1066,39 +1068,39 @@ static int synaptics_s1302_radd_show(struct seq_file *seq, void *offset)
 static ssize_t synaptics_s1302_radd_write(struct file *file, const char __user *buffer, size_t count, loff_t *ppos)
 {
 	int buf[128];
-    int ret,i;
+	int ret,i;
 	struct synaptics_ts_data *ts = tc_g;
-    int temp_block,wbyte;
-    char reg[30];
+	int temp_block,wbyte;
+	char reg[30];
 
-    ret = sscanf(buffer,"%x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x",\
-    &buf[0],&buf[1],&buf[2],&buf[3],&buf[4],&buf[5],&buf[6],&buf[7],&buf[8],&buf[9],\
-    &buf[10],&buf[11],&buf[12],&buf[13],&buf[14],&buf[15],&buf[16],&buf[17]);
-    for (i = 0;i < ret;i++)
-    {
-        printk("buf[i]=0x%x,",buf[i]);
-    }
-    printk("\n");
-    page= buf[0];
-    address = buf[1];
-    temp_block = buf[2];
-    wbyte = buf[3];
-    if (0xFF == temp_block)//the  mark is to write register else read register
-    {
-        for (i=0;i < wbyte;i++)
-        {
-            reg[i] = (char)buf[4+i];
-        }
-        ret = synaptics_rmi4_i2c_write_byte(ts->client,0xff,page);
-        ret = synaptics_rmi4_i2c_write_block(ts->client,(char)address,wbyte,reg);
-        printk("%s write page=0x%x,address=0x%x\n",__func__,page,address);
-        for (i=0;i < wbyte;i++)
-        {
-            printk("reg=0x%x\n",reg[i]);
-        }
-    }
-    else
-        block = temp_block;
+	ret = sscanf(buffer,"%x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x",\
+		&buf[0],&buf[1],&buf[2],&buf[3],&buf[4],&buf[5],&buf[6],&buf[7],&buf[8],&buf[9],\
+		&buf[10],&buf[11],&buf[12],&buf[13],&buf[14],&buf[15],&buf[16],&buf[17]);
+	for (i = 0;i < ret;i++)
+	{
+		printk("buf[i]=0x%x,",buf[i]);
+	}
+	printk("\n");
+	page= buf[0];
+	address = buf[1];
+	temp_block = buf[2];
+	wbyte = buf[3];
+	if (0xFF == temp_block)//the  mark is to write register else read register
+	{
+		for (i=0;i < wbyte;i++)
+		{
+			reg[i] = (char)buf[4+i];
+		}
+		ret = synaptics_rmi4_i2c_write_byte(ts->client,0xff,page);
+		ret = synaptics_rmi4_i2c_write_block(ts->client,(char)address,wbyte,reg);
+		printk("%s write page=0x%x,address=0x%x\n",__func__,page,address);
+		for (i=0;i < wbyte;i++)
+		{
+			printk("reg=0x%x\n",reg[i]);
+		}
+	}
+	else
+	block = temp_block;
 	return count;
 }
 static int synaptics_s1302_radd_open(struct inode *inode, struct file *file)
@@ -1814,6 +1816,18 @@ static void synaptics_hard_reset(struct synaptics_ts_data *ts)
     }
 
 }
+
+static void synaptics_suspend_resume(struct work_struct *work)
+{
+	struct synaptics_ts_data *ts =
+		container_of(work, typeof(*ts), pm_work);
+
+	if (ts->suspended)
+		synaptics_ts_suspend(&ts->client->dev);
+	else
+		synaptics_ts_resume(&ts->client->dev);
+}
+
 static int synaptics_parse_dts(struct device *dev, struct synaptics_ts_data *ts)
 {
 	int rc;
@@ -2014,7 +2028,7 @@ static int synaptics_ts_probe(struct i2c_client *client, const struct i2c_device
 	TPD_ERR("CURRENT_FIRMWARE_ID = 0x%x\n", CURRENT_FIRMWARE_ID);
     sprintf(ts->fw_id,"0x%x",CURRENT_FIRMWARE_ID);
 
-	memset(ts->fw_name,0,TP_FW_NAME_MAX_LEN);
+	memset(ts->fw_name, 0, TP_FW_NAME_MAX_LEN);
 	strcpy(ts->fw_name,"tp/fw_synaptics_touchkey.img");
 	TPD_DEBUG("synatpitcs_fw: fw_name = %s \n",ts->fw_name);
 
@@ -2035,6 +2049,9 @@ static int synaptics_ts_probe(struct i2c_client *client, const struct i2c_device
 	ret = synaptics_enable_interrupt(ts, 1);
 	if(ret < 0)
 		TPD_ERR("%s enable interrupt error ret=%d\n",__func__,ret);
+
+	INIT_WORK(&ts->pm_work, synaptics_suspend_resume);
+
 #if defined(CONFIG_FB)
 	ts->suspended = 0;
 	ts->fb_notif.notifier_call = fb_notifier_callback;
@@ -2189,30 +2206,30 @@ ERR_RESUME:
 #if defined(CONFIG_FB)
 static int fb_notifier_callback(struct notifier_block *self, unsigned long event, void *data)
 {
+	struct synaptics_ts_data *ts =
+		container_of(self, struct synaptics_ts_data, fb_notif);
 	struct fb_event *evdata = data;
-	int *blank;
+	int *blank = evdata->data;
 
-	struct synaptics_ts_data *ts = container_of(self, struct synaptics_ts_data, fb_notif);
+	if (event != FB_EVENT_BLANK)
+		return NOTIFY_OK;
 
-	if(FB_EVENT_BLANK != event)
-	return 0;
-	if((evdata) && (evdata->data) && (ts) && (ts->client)&&(event == FB_EVENT_BLANK)) {
-		blank = evdata->data;
-		if( *blank == FB_BLANK_UNBLANK || *blank == FB_BLANK_NORMAL) {
-			TPD_DEBUG("%s going TP resume\n", __func__);
-			if(ts->suspended == 1){
-				ts->suspended = 0;
-				synaptics_ts_resume(&ts->client->dev);
-			}
-		} else if( *blank == FB_BLANK_POWERDOWN) {
-			TPD_DEBUG("%s : going TP suspend\n", __func__);
-			if(ts->suspended == 0) {
-				ts->suspended = 1;
-				synaptics_ts_suspend(&ts->client->dev);
-			}
+	switch (*blank) {
+	case FB_BLANK_UNBLANK:
+	case FB_BLANK_NORMAL:
+		if (ts->suspended) {
+			ts->suspended = 0;
+			queue_work(system_highpri_wq, &ts->pm_work);
+		}
+		break;
+	case FB_BLANK_POWERDOWN:
+		if (!ts->suspended) {
+			ts->suspended = 1;
+			queue_work(system_highpri_wq, &ts->pm_work);
 		}
 	}
-	return 0;
+
+	return NOTIFY_OK;
 }
 #endif
 

@@ -270,7 +270,7 @@ static cpumask_var_t *wq_numa_possible_cpumask;
 					/* possible CPUs of each node */
 
 static bool wq_disable_numa;
-module_param_named(disable_numa, wq_disable_numa, bool, 0444);
+module_param_named(disable_numa, wq_disable_numa, bool, 0644);
 
 /* see the comment above the definition of WQ_POWER_EFFICIENT */
 #ifdef CONFIG_WQ_POWER_EFFICIENT_DEFAULT
@@ -279,7 +279,7 @@ static bool wq_power_efficient = true;
 static bool wq_power_efficient;
 #endif
 
-module_param_named(power_efficient, wq_power_efficient, bool, 0444);
+module_param_named(power_efficient, wq_power_efficient, bool, 0644);
 
 static bool wq_numa_enabled;		/* unbound NUMA affinity enabled */
 
@@ -1443,13 +1443,13 @@ static void __queue_delayed_work(int cpu, struct workqueue_struct *wq,
 	timer_stats_timer_set_start_info(&dwork->timer);
 
 	dwork->wq = wq;
+	/* timer isn't guaranteed to run in this cpu, record earlier */
+	if (cpu == WORK_CPU_UNBOUND)
+		cpu = raw_smp_processor_id();
 	dwork->cpu = cpu;
 	timer->expires = jiffies + delay;
 
-	if (unlikely(cpu != WORK_CPU_UNBOUND))
-		add_timer_on(timer, cpu);
-	else
-		add_timer(timer);
+	add_timer_on(timer, cpu);
 }
 
 /**
