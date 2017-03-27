@@ -67,10 +67,8 @@ static struct inode *f2fs_new_inode(struct inode *dir, umode_t mode)
 		set_inode_flag(inode, FI_INLINE_XATTR);
 	if (test_opt(sbi, INLINE_DATA) && f2fs_may_inline_data(inode))
 		set_inode_flag(inode, FI_INLINE_DATA);
-#ifndef F2FS_DEFAULT_NOINLINE_DENTRY
 	if (f2fs_may_inline_dentry(inode))
 		set_inode_flag(inode, FI_INLINE_DENTRY);
-#endif
 
 	f2fs_init_extent_tree(inode, NULL);
 
@@ -239,7 +237,8 @@ static int __recover_dot_dentries(struct inode *dir, nid_t pino)
 	f2fs_balance_fs(sbi, true);
 
 	f2fs_lock_op(sbi);
-	de = f2fs_find_entry(dir, &dot, &page, NULL);
+
+	de = f2fs_find_entry(dir, &dot, &page);
 	if (de) {
 		f2fs_dentry_kunmap(dir, page);
 		f2fs_put_page(page, 0);
@@ -251,7 +250,8 @@ static int __recover_dot_dentries(struct inode *dir, nid_t pino)
 		if (err)
 			goto out;
 	}
-	de = f2fs_find_entry(dir, &dotdot, &page, NULL);
+
+	de = f2fs_find_entry(dir, &dotdot, &page);
 	if (de) {
 		f2fs_dentry_kunmap(dir, page);
 		f2fs_put_page(page, 0);
@@ -276,8 +276,6 @@ static struct dentry *f2fs_lookup(struct inode *dir, struct dentry *dentry,
 	struct page *page;
 	nid_t ino;
 	int err = 0;
-	struct ci_name_buf ci_name_buf;
-	struct qstr ci_name;
 	unsigned int root_ino = F2FS_ROOT_INO(F2FS_I_SB(dir));
 
 	if (f2fs_encrypted_inode(dir)) {
@@ -298,13 +296,7 @@ static struct dentry *f2fs_lookup(struct inode *dir, struct dentry *dentry,
 	if (dentry->d_name.len > F2FS_NAME_LEN)
 		return ERR_PTR(-ENAMETOOLONG);
 
-	ci_name_buf.name[0] = '\0';
-
-	if (flags & LOOKUP_CASE_INSENSITIVE)
-		de = f2fs_find_entry(dir, &dentry->d_name, &page, &ci_name_buf);
-	else
-		de = f2fs_find_entry(dir, &dentry->d_name, &page, NULL);
-
+	de = f2fs_find_entry(dir, &dentry->d_name, &page);
 	if (!de) {
 		if (IS_ERR(page))
 			return (struct dentry *)page;
@@ -338,12 +330,7 @@ static struct dentry *f2fs_lookup(struct inode *dir, struct dentry *dentry,
 		err = nokey ? -ENOKEY : -EPERM;
 		goto err_out;
 	}
-	if (ci_name_buf.name[0] != '\0') {
-		ci_name.name = ci_name_buf.name;
-		ci_name.len = dentry->d_name.len;
-		return d_add_ci(dentry, inode, &ci_name);
-	} else
-		return d_splice_alias(inode, dentry);
+	return d_splice_alias(inode, dentry);
 
 err_out:
 	iput(inode);
@@ -359,7 +346,8 @@ static int f2fs_unlink(struct inode *dir, struct dentry *dentry)
 	int err = -ENOENT;
 
 	trace_f2fs_unlink_enter(dir, dentry);
-	de = f2fs_find_entry(dir, &dentry->d_name, &page, NULL);
+
+	de = f2fs_find_entry(dir, &dentry->d_name, &page);
 	if (!de) {
 		if (IS_ERR(page))
 			err = PTR_ERR(page);
@@ -698,7 +686,8 @@ static int f2fs_rename(struct inode *old_dir, struct dentry *old_dentry,
 		err = -EPERM;
 		goto out;
 	}
-	old_entry = f2fs_find_entry(old_dir, &old_dentry->d_name, &old_page, NULL);
+
+	old_entry = f2fs_find_entry(old_dir, &old_dentry->d_name, &old_page);
 	if (!old_entry) {
 		if (IS_ERR(old_page))
 			err = PTR_ERR(old_page);
@@ -728,7 +717,7 @@ static int f2fs_rename(struct inode *old_dir, struct dentry *old_dentry,
 
 		err = -ENOENT;
 		new_entry = f2fs_find_entry(new_dir, &new_dentry->d_name,
-						&new_page, NULL);
+						&new_page);
 		if (!new_entry) {
 			if (IS_ERR(new_page))
 				err = PTR_ERR(new_page);
@@ -789,7 +778,7 @@ static int f2fs_rename(struct inode *old_dir, struct dentry *old_dentry,
 			old_page = NULL;
 
 			old_entry = f2fs_find_entry(old_dir,
-						&old_dentry->d_name, &old_page, NULL);
+						&old_dentry->d_name, &old_page);
 			if (!old_entry) {
 				err = -ENOENT;
 				if (IS_ERR(old_page))
@@ -883,13 +872,15 @@ static int f2fs_cross_rename(struct inode *old_dir, struct dentry *old_dentry,
 			(!fscrypt_has_permitted_context(new_dir, old_inode) ||
 			 !fscrypt_has_permitted_context(old_dir, new_inode)))
 		return -EPERM;
-	old_entry = f2fs_find_entry(old_dir, &old_dentry->d_name, &old_page, NULL);
+
+	old_entry = f2fs_find_entry(old_dir, &old_dentry->d_name, &old_page);
 	if (!old_entry) {
 		if (IS_ERR(old_page))
 			err = PTR_ERR(old_page);
 		goto out;
 	}
-	new_entry = f2fs_find_entry(new_dir, &new_dentry->d_name, &new_page, NULL);
+
+	new_entry = f2fs_find_entry(new_dir, &new_dentry->d_name, &new_page);
 	if (!new_entry) {
 		if (IS_ERR(new_page))
 			err = PTR_ERR(new_page);
